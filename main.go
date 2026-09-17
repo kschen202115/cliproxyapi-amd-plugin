@@ -505,7 +505,7 @@ func pluginRegistration() registration {
 		SchemaVersion: schemaVersion,
 		Metadata: metadata{
 			Name:             provider,
-			Version:          "0.1.0",
+			Version:          "0.1.1",
 			Author:           "AMD AIM community",
 			GitHubRepository: "https://amd-aim.github.io/radeon-cloud-docs/",
 			ConfigFields:     []configField{},
