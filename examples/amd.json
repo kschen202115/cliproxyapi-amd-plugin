@@ -1,0 +1,5 @@
+{
+  "provider": "amd",
+  "api_key": "rc-replace-with-your-48-hex-character-radeon-api-key",
+  "label": "AMD Radeon Cloud"
+}

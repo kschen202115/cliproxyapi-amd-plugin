@@ -1,0 +1,7 @@
+plugins:
+  enabled: true
+  dir: plugins
+  configs:
+    amd:
+      enabled: true
+      priority: 10
