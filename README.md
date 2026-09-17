@@ -64,6 +64,8 @@ Radeon Cloud uses API keys instead of OAuth. Choose **Authenticate** for `amd`; 
 
 When the plugin page cannot read the management key from a cross-origin UI setup, expand **Management key** and enter the CLIProxyAPI management key for that one request. The page does not persist either key in browser storage.
 
+The default CLIProxyAPI credential-card toolbar has no plugin extension slot, so the quota refresh control cannot be inserted beside its built-in model/download/settings/delete icons. Open **AMD Radeon Cloud** from the plugin resource page instead; select **Load AMD credentials**, then use **Refresh quota** on the desired credential. The result shows daily remaining/used/limit, RPM, today's activity, and the reset time.
+
 ## Notes
 
 - Radeon Cloud's model catalog is dynamic, so this plugin does not hard-code a model list.
