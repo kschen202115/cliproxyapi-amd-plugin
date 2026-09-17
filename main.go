@@ -62,8 +62,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 	"unsafe"
 )
 
@@ -117,6 +119,7 @@ type capabilities struct {
 	ExecutorInputFormats  []string `json:"executor_input_formats"`
 	ExecutorOutputFormats []string `json:"executor_output_formats"`
 	QuotaProvider         bool     `json:"quota_provider"`
+	ManagementAPI         bool     `json:"management_api"`
 }
 
 type identifierResponse struct {
@@ -165,11 +168,32 @@ type authRefreshResponse struct {
 	Auth authData `json:"Auth"`
 }
 
+type authLoginStartRequest struct {
+	BaseURL string `json:"BaseURL"`
+}
+
+type authLoginStartResponse struct {
+	Provider  string `json:"Provider"`
+	URL       string `json:"URL"`
+	State     string `json:"State"`
+	ExpiresAt string `json:"ExpiresAt"`
+}
+
+type authLoginPollRequest struct {
+	State string `json:"State"`
+}
+
+type authLoginPollResponse struct {
+	Status  string   `json:"Status"`
+	Message string   `json:"Message"`
+	Auth    authData `json:"Auth,omitempty"`
+}
+
 type authModelRequest struct {
-	AuthID         string          `json:"AuthID"`
-	AuthProvider   string          `json:"AuthProvider"`
-	StorageJSON    []byte          `json:"StorageJSON"`
-	HostCallbackID string          `json:"host_callback_id,omitempty"`
+	AuthID         string `json:"AuthID"`
+	AuthProvider   string `json:"AuthProvider"`
+	StorageJSON    []byte `json:"StorageJSON"`
+	HostCallbackID string `json:"host_callback_id,omitempty"`
 }
 
 type modelResponse struct {
@@ -198,15 +222,15 @@ type amdModel struct {
 }
 
 type executorRequest struct {
-	AuthID         string              `json:"AuthID"`
-	AuthProvider   string              `json:"AuthProvider"`
-	Model          string              `json:"Model"`
-	Format         string              `json:"Format"`
-	Stream         bool                `json:"Stream"`
-	Payload        []byte              `json:"Payload"`
-	StorageJSON    []byte              `json:"StorageJSON"`
-	StreamID       string              `json:"stream_id,omitempty"`
-	HostCallbackID string              `json:"host_callback_id,omitempty"`
+	AuthID         string `json:"AuthID"`
+	AuthProvider   string `json:"AuthProvider"`
+	Model          string `json:"Model"`
+	Format         string `json:"Format"`
+	Stream         bool   `json:"Stream"`
+	Payload        []byte `json:"Payload"`
+	StorageJSON    []byte `json:"StorageJSON"`
+	StreamID       string `json:"stream_id,omitempty"`
+	HostCallbackID string `json:"host_callback_id,omitempty"`
 }
 
 type executorResponse struct {
@@ -259,6 +283,56 @@ type streamCloseRequest struct {
 	Error    string `json:"error,omitempty"`
 }
 
+type managementRegistration struct {
+	Routes    []managementRoute    `json:"routes,omitempty"`
+	Resources []managementResource `json:"resources,omitempty"`
+}
+
+type managementRoute struct {
+	Method string `json:"Method"`
+	Path   string `json:"Path"`
+}
+
+type managementResource struct {
+	Path        string `json:"Path"`
+	Menu        string `json:"Menu"`
+	Description string `json:"Description"`
+}
+
+type managementRequest struct {
+	Method string              `json:"Method"`
+	Path   string              `json:"Path"`
+	Query  map[string][]string `json:"Query"`
+	Body   []byte              `json:"Body"`
+}
+
+type managementResponse struct {
+	StatusCode int                 `json:"StatusCode"`
+	Headers    map[string][]string `json:"Headers"`
+	Body       []byte              `json:"Body"`
+}
+
+type apiKeyForm struct {
+	APIKey string `json:"api_key"`
+	Label  string `json:"label"`
+	State  string `json:"state"`
+}
+
+type hostAuthListResponse struct {
+	Files []hostAuthFile `json:"files"`
+}
+
+type hostAuthFile struct {
+	AuthIndex string `json:"auth_index"`
+	Name      string `json:"name"`
+	Provider  string `json:"provider"`
+}
+
+type hostAuthGetResponse struct {
+	Name string          `json:"name"`
+	JSON json.RawMessage `json:"json"`
+}
+
 type quotaFetchRequest struct {
 	Provider       string `json:"provider"`
 	StorageJSON    []byte `json:"storage_json,omitempty"`
@@ -298,13 +372,13 @@ type quotaFetchResponse struct {
 }
 
 type amdUsageProfile struct {
-	Status                  string  `json:"status"`
-	RPMLimit                float64 `json:"rpm_limit"`
-	DailyCostLimitUSD       float64 `json:"daily_cost_limit_usd"`
-	DailyCostUsedUSD        float64 `json:"daily_cost_used_usd"`
-	DailyCostRemainingUSD   float64 `json:"daily_cost_remaining_usd"`
-	DailyResetAt            string  `json:"daily_reset_at"`
-	Today                   struct {
+	Status                string  `json:"status"`
+	RPMLimit              float64 `json:"rpm_limit"`
+	DailyCostLimitUSD     float64 `json:"daily_cost_limit_usd"`
+	DailyCostUsedUSD      float64 `json:"daily_cost_used_usd"`
+	DailyCostRemainingUSD float64 `json:"daily_cost_remaining_usd"`
+	DailyResetAt          string  `json:"daily_reset_at"`
+	Today                 struct {
 		Requests    float64 `json:"requests"`
 		Errors      float64 `json:"errors"`
 		TotalTokens float64 `json:"total_tokens"`
@@ -312,7 +386,7 @@ type amdUsageProfile struct {
 }
 
 type upstreamStatusError struct {
-	status int
+	status  int
 	message string
 }
 
@@ -387,9 +461,9 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case "auth.refresh":
 		return refreshAuth(request)
 	case "auth.login.start":
-		return errorEnvelope("unsupported", "AMD Radeon Cloud uses API-key credentials; create an amd credential JSON file instead", 400), nil
+		return startAPIKeyLogin(request)
 	case "auth.login.poll":
-		return okEnvelope(map[string]string{"Status": "error", "Message": "AMD Radeon Cloud has no interactive login flow"})
+		return pollAPIKeyLogin(request)
 	case "model.static":
 		// Radeon exposes one public catalog for all keys. Discover it per auth record
 		// so an invalid/expired key never makes models look executable.
@@ -410,6 +484,17 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		return fetchQuota(request)
 	case "quota.reset":
 		return okEnvelope(map[string]any{"success": false, "message": "AMD Radeon Cloud does not support quota reset"})
+	case "management.register":
+		return okEnvelope(managementRegistration{
+			Routes: []managementRoute{{Method: "POST", Path: "/plugins/amd/credentials"}},
+			Resources: []managementResource{{
+				Path:        "/credentials",
+				Menu:        "AMD Radeon Cloud",
+				Description: "Add an AMD Radeon Cloud API key.",
+			}},
+		})
+	case "management.handle":
+		return handleManagement(request)
 	default:
 		return errorEnvelope("unknown_method", "unknown method: "+method, 400), nil
 	}
@@ -433,8 +518,137 @@ func pluginRegistration() registration {
 			ExecutorInputFormats:  []string{"chat-completions"},
 			ExecutorOutputFormats: []string{"chat-completions"},
 			QuotaProvider:         true,
+			ManagementAPI:         true,
 		},
 	}
+}
+
+func startAPIKeyLogin(raw []byte) ([]byte, error) {
+	var req authLoginStartRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, fmt.Errorf("decode AMD login request: %w", err)
+	}
+	state := fmt.Sprintf("amd-api-key-%d", time.Now().UTC().UnixNano())
+	resourceURL := strings.TrimRight(strings.TrimSpace(req.BaseURL), "/")
+	resourceURL = strings.TrimSuffix(resourceURL, "/v0/management")
+	resourceURL += "/v0/resource/plugins/amd/credentials?state=" + url.QueryEscape(state)
+	return okEnvelope(authLoginStartResponse{
+		Provider:  provider,
+		URL:       resourceURL,
+		State:     state,
+		ExpiresAt: time.Now().UTC().Add(10 * time.Minute).Format(time.RFC3339),
+	})
+}
+
+func pollAPIKeyLogin(raw []byte) ([]byte, error) {
+	var req authLoginPollRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, fmt.Errorf("decode AMD login poll: %w", err)
+	}
+	state := strings.TrimSpace(req.State)
+	if !strings.HasPrefix(state, "amd-api-key-") {
+		return okEnvelope(authLoginPollResponse{Status: "error", Message: "invalid AMD API-key login state"})
+	}
+	result, err := hostCall("host.auth.list", map[string]any{})
+	if err != nil {
+		return nil, err
+	}
+	var list hostAuthListResponse
+	if err := json.Unmarshal(result, &list); err != nil {
+		return nil, fmt.Errorf("decode AMD auth list: %w", err)
+	}
+	target := state + ".json"
+	for _, item := range list.Files {
+		if item.Name != target || !isAMDProvider(item.Provider) || item.AuthIndex == "" {
+			continue
+		}
+		result, err := hostCall("host.auth.get", map[string]string{"auth_index": item.AuthIndex})
+		if err != nil {
+			return nil, err
+		}
+		var saved hostAuthGetResponse
+		if err := json.Unmarshal(result, &saved); err != nil {
+			return nil, fmt.Errorf("decode saved AMD credential: %w", err)
+		}
+		cred, explicit, err := decodeCredential(saved.JSON)
+		if err != nil || !explicit {
+			return okEnvelope(authLoginPollResponse{Status: "error", Message: "saved AMD credential could not be read"})
+		}
+		return okEnvelope(authLoginPollResponse{
+			Status:  "success",
+			Message: "AMD API key saved",
+			Auth:    makeAuthData(cred, saved.JSON, target, state),
+		})
+	}
+	return okEnvelope(authLoginPollResponse{Status: "pending", Message: "Enter your Radeon API key in the opened page."})
+}
+
+func handleManagement(raw []byte) ([]byte, error) {
+	var req managementRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, fmt.Errorf("decode AMD management request: %w", err)
+	}
+	if strings.EqualFold(req.Method, "GET") && strings.HasSuffix(req.Path, "/credentials") {
+		return okEnvelope(htmlManagementResponse(apiKeyPage(firstQuery(req.Query, "state"))))
+	}
+	if !strings.EqualFold(req.Method, "POST") || !strings.HasSuffix(req.Path, "/plugins/amd/credentials") {
+		return okEnvelope(jsonManagementResponse(404, map[string]string{"error": "not_found"}))
+	}
+	var form apiKeyForm
+	if err := json.Unmarshal(req.Body, &form); err != nil {
+		return okEnvelope(jsonManagementResponse(400, map[string]string{"error": "invalid_request", "message": "invalid JSON body"}))
+	}
+	key := strings.TrimSpace(form.APIKey)
+	state := strings.TrimSpace(form.State)
+	if !strings.HasPrefix(key, "rc-") || len(key) < 10 {
+		return okEnvelope(jsonManagementResponse(400, map[string]string{"error": "invalid_api_key", "message": "Enter a Radeon API key beginning with rc-"}))
+	}
+	if state == "" || !strings.HasPrefix(state, "amd-api-key-") {
+		state = fmt.Sprintf("amd-api-key-%d", time.Now().UTC().UnixNano())
+	}
+	label := strings.TrimSpace(form.Label)
+	if label == "" {
+		label = "AMD Radeon Cloud"
+	}
+	storage, err := json.Marshal(credential{Provider: provider, APIKey: key, Label: label, ID: state})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := hostCall("host.auth.save", map[string]any{
+		"name": state + ".json",
+		"json": json.RawMessage(storage),
+	}); err != nil {
+		return nil, err
+	}
+	return okEnvelope(jsonManagementResponse(201, map[string]string{"status": "ok", "message": "AMD API key saved"}))
+}
+
+func firstQuery(values map[string][]string, name string) string {
+	if values == nil || len(values[name]) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(values[name][0])
+}
+
+func jsonManagementResponse(status int, body any) managementResponse {
+	raw, _ := json.Marshal(body)
+	return managementResponse{StatusCode: status, Headers: map[string][]string{"content-type": {"application/json"}}, Body: raw}
+}
+
+func htmlManagementResponse(body []byte) managementResponse {
+	return managementResponse{
+		StatusCode: 200,
+		Headers: map[string][]string{
+			"content-type":            {"text/html; charset=utf-8"},
+			"content-security-policy": {"default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'self'"},
+		},
+		Body: body,
+	}
+}
+
+func apiKeyPage(state string) []byte {
+	stateJSON, _ := json.Marshal(state)
+	return []byte(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AMD Radeon Cloud API Key</title><style>body{font:15px system-ui,sans-serif;max-width:620px;margin:40px auto;padding:0 20px;color:#18212f}label{display:block;font-weight:600;margin-top:16px}input{box-sizing:border-box;width:100%;margin-top:6px;padding:10px;border:1px solid #b8c2cf;border-radius:7px}button{margin-top:22px;padding:10px 16px;border:0;border-radius:7px;background:#d64b2a;color:white;font-weight:700;cursor:pointer}#result{margin-top:16px;white-space:pre-wrap}.hint{color:#526273;font-size:13px}</style><main><h1>添加 AMD Radeon Cloud API Key</h1><p class="hint">密钥仅发送到当前 CLIProxyAPI 服务，用于创建一个 amd 凭证文件。</p><form id="form"><label>Radeon API Key<input id="key" type="password" autocomplete="off" placeholder="rc-..." required></label><label>名称（可选）<input id="label" maxlength="80" placeholder="AMD Radeon Cloud"></label><details><summary>管理密钥（仅在自动读取失败时填写）</summary><input id="managementKey" type="password" autocomplete="off" placeholder="CLIProxyAPI management key"></details><button>保存 API Key</button></form><p id="result" role="status"></p></main><script>const state=` + string(stateJSON) + `;const result=document.getElementById('result');function storedKey(){const direct=['managementKey','management-key','management_password','managementPassword'];for(const k of direct){const v=localStorage.getItem(k);if(v)return v}for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i)||'';if(/management.*(key|password)|(key|password).*management/i.test(k)){const v=localStorage.getItem(k);if(v)return v}}return ''}document.getElementById('form').addEventListener('submit',async e=>{e.preventDefault();result.textContent='保存中…';const key=document.getElementById('key').value.trim();const label=document.getElementById('label').value.trim();const managementKey=document.getElementById('managementKey').value.trim()||storedKey();if(!managementKey){result.textContent='未找到管理密钥。请展开并填写 CLIProxyAPI 管理密钥。';return}try{const r=await fetch('/v0/management/plugins/amd/credentials',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+managementKey},body:JSON.stringify({api_key:key,label,state})});const data=await r.json();if(!r.ok)throw new Error(data.message||data.error||'保存失败');document.getElementById('key').value='';result.textContent='已保存。请返回认证窗口，它会自动完成；额度和模型将随后加载。'}catch(err){result.textContent='保存失败：'+err.message}});</script></html>`)
 }
 
 func parseAuth(raw []byte) ([]byte, error) {

@@ -58,6 +58,12 @@ The matching generated C header (`amd.h`) does not need to be installed. CLIProx
 
 Credential files are deliberately explicit (`provider: "amd"`). This prevents the auth parser from claiming unrelated JSON credentials in the same directory.
 
+### Add an API key from the management UI
+
+Radeon Cloud uses API keys instead of OAuth. Choose **Authenticate** for `amd`; it opens the plugin's **AMD Radeon Cloud** page, where you can enter an `rc-...` key and an optional label. The page sends the key only to the same CLIProxyAPI server through its authenticated management route, creates an `amd` credential file, and completes the authentication flow automatically.
+
+When the plugin page cannot read the management key from a cross-origin UI setup, expand **Management key** and enter the CLIProxyAPI management key for that one request. The page does not persist either key in browser storage.
+
 ## Notes
 
 - Radeon Cloud's model catalog is dynamic, so this plugin does not hard-code a model list.
