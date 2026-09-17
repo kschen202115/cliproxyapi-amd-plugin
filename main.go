@@ -74,7 +74,7 @@ const (
 	schemaVersion uint32 = 6
 	provider             = "amd"
 	baseURL              = "https://developer.amd.com.cn/radeon/api/v1"
-	usageURL             = "https://radeon-global.anruicloud.com/api/profile/model-usage"
+	usageURL             = "https://developer.amd.com.cn/radeon/api/profile/model-usage"
 )
 
 type envelope struct {
@@ -505,7 +505,7 @@ func pluginRegistration() registration {
 		SchemaVersion: schemaVersion,
 		Metadata: metadata{
 			Name:             provider,
-			Version:          "0.1.2",
+			Version:          "0.1.3",
 			Author:           "AMD AIM community",
 			GitHubRepository: "https://amd-aim.github.io/radeon-cloud-docs/",
 			ConfigFields:     []configField{},
