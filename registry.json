@@ -6,7 +6,7 @@
       "name": "AMD Radeon Cloud",
       "description": "AMD Radeon Cloud models and per-credential quota display for CLIProxyAPI.",
       "author": "AMD AIM community",
-      "repository": "kschen202115/cliproxyapi-amd-plugin",
+      "repository": "https://github.com/kschen202115/cliproxyapi-amd-plugin",
       "homepage": "https://amd-aim.github.io/radeon-cloud-docs/",
       "license": "MIT",
       "tags": ["amd", "radeon", "openai-compatible", "quota"]
